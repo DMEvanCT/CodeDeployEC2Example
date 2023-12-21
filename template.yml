@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: AWS CloudFormation Template for Redis Cluster and DocumentDB
+Description: AWS CloudFormation Template EC2 Instance with CodeDeploy
 
 
 Metadata:
