@@ -1,0 +1,20 @@
+name: Deploy Python App
+on:
+  workflow_call:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: configure aws credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        role-to-assume: arn:aws:iam::1234:role/GithubActions-Assume
+        role-session-name: codedeployec2
+        aws-region: us-east-2
+    - name: 
+      run: |
+        echo "Deploying branch ${{ env.GITHUB_REF }}"
+        commit_hash=`git rev-parse HEAD`
+        aws deploy create-deployment --application-name ScraperApplicationResturants --deployment-group-name CodeDeployDeploymentGroupScraper --s3-location bucket=abc-bucket,bundleType=zip,key=${{ github.sha }}.zip --ignore-application-stop-failures

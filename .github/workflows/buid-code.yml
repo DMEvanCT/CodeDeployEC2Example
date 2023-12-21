@@ -1,0 +1,36 @@
+name: Build Code
+
+on:
+  workflow_call:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.x'
+      - name: configure aws credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws:iam::123456:role/GithubActions-AssumeRole
+          role-session-name: res-scraper
+          aws-region: us-east-2
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Build
+        run: python build.py
+      - name: zipBuildStandard
+        run: |
+          mkdir ${{ github.sha }}
+          cp -r ./venv ${{ github.sha }}
+          cp -r  ./requirements.txt ${{ github.sha }}
+          cp -r scripts ${{ github.sha }}
+          cp appspec.yml ${{ github.sha }}
+          cp app ${{ github.sha }}
+          zip -r ${{ github.sha }}.zip ${{ github.sha }}
+      - name: upload zip to s3
+        run: |
+          aws s3 cp ${{ github.sha }}.zip s3://abc-bucket

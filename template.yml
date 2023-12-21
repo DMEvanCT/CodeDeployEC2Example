@@ -1,0 +1,195 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: AWS CloudFormation Template for Redis Cluster and DocumentDB
+
+
+Metadata:
+  cfn-lint:
+    config:
+      regions:
+        - us-east-1
+        - us-east-2
+      ignore_checks:
+        - E3030
+  checkov:
+    skip: 
+      - CKV_AWS_24: #Needed for CodeDeploy
+        - "*"
+      - CKV_AWS_18: #Not a concern here
+        - "*"
+
+
+Parameters:
+  Subnet1:
+    Description: The first subnet
+    Type: String
+  Subnet2:
+    Description: The second subnet
+    Type: String
+  VPC:
+    Description: The VPC
+    Type: 'AWS::EC2::VPC::Id'
+
+
+Resources:
+  S3Bucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: abc-bucket
+      AccessControl: Private
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Name
+          Value: abc-bucket
+        - Key: Application
+          Value: PythonApp
+
+  KMS:
+    Type: 'AWS::KMS::Key'
+    Properties:
+      Description: KMS key for APP
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Id: key-default-1
+        Statement:
+        - Sid: Enable IAM User Permissions
+          Effect: Allow
+          Principal:
+            AWS: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:root
+          Action: 'kms:*'
+          Resource: '*'
+
+  EC2SecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties: 
+      VpcId: !Ref VPC
+      GroupDescription: Security Group for EC2
+
+  CodeDeployServiceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: CodeDeployServiceRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codedeploy.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSCodeDeployRole'
+
+  CodeDeployApplication:
+    Type: 'AWS::CodeDeploy::Application'
+    Properties:
+      ApplicationName: PythonApp
+
+  CodeDeployDeploymentGroup:
+    Type: 'AWS::CodeDeploy::DeploymentGroup'
+    Properties:
+      ApplicationName: !Ref CodeDeployApplication
+      DeploymentGroupName: CodeDeployPythonApp
+      DeploymentConfigName: CodeDeployDefault.OneAtATime
+      Ec2TagFilters:
+        - Key: Application
+          Value: PythonApp
+          Type: KEY_AND_VALUE
+      ServiceRoleArn: !GetAtt CodeDeployServiceRole.Arn
+
+
+# IAM role that allows access to the SQS queue and managed role AmazonEC2RoleforAWSCodeDeploy
+  PythonRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - 'ec2.amazonaws.com'
+            Action:
+              - 'sts:AssumeRole'
+      Path: '/'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforAWSCodeDeploy'
+      Policies:
+        - PolicyName: GetAndPutObject
+          PolicyDocument:
+            Version: '2012-10-17'
+              # Add access to s3 bucket to get and put object and list bucket
+              - Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                  - 's3:PutObject'
+                  - 's3:ListBucket'
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:s3:::abc-bucket/*'
+                  - !Sub 'arn:${AWS::Partition}:s3:::abc-bucket'
+  
+  PythonInstanceProfile:
+    Type: 'AWS::IAM::InstanceProfile'
+    Properties:
+      Roles:
+        - Ref: PythonRole
+
+# Create a launc configuration with ami  ami-0e83be366243f524a gpt3 volume 100 gb encypted and size m5a.xlarge and the security group EC2PythonSecurityGroup.GroupId
+  PythonAppLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: PythonAppLaunchTemplate
+      LaunchTemplateData:
+        ImageId: ami-0e83be366243f524a
+        InstanceType: m5a.large
+        SecurityGroupIds:
+          - !GetAtt EC2PythonSecurityGroup.GroupId
+        BlockDeviceMappings:
+          - DeviceName: /dev/sda1
+            Ebs:
+              Encrypted: true  
+              VolumeSize: 20
+              VolumeType: gp3
+        IamInstanceProfile:
+          Arn: !GetAtt PythonInstanceProfile.Arn
+        KeyName: res-rsa
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            apt-get update
+            apt-get install -y ruby
+            apt-get install -y wget
+            cd /home/ubuntu
+            wget https://aws-codedeploy-${AWS::Region}.s3.amazonaws.com/latest/install
+            chmod +x ./install
+            ./install auto
+        MetadataOptions:
+          HttpTokens: required
+
+  PythonAutoScalingGroup:
+    Type: 'AWS::AutoScaling::AutoScalingGroup'
+    Properties:
+      AutoScalingGroupName: PythonAutoScalingGroup
+      MinSize: 0
+      MaxSize: 3
+      DesiredCapacity: 3
+      LaunchTemplate:
+        LaunchTemplateId: !Ref PythonAppLaunchTemplate
+        Version: !GetAtt PythonAppLaunchTemplate.LatestVersionNumber
+      VPCZoneIdentifier:
+        - !Ref Subnet1
+        - !Ref Subnet2
+      Tags:
+        - Key: Application
+          Value: PythonApp
+          PropagateAtLaunch: true
+      TerminationPolicies:
+        - OldestInstance
+        - OldestLaunchConfiguration

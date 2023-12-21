@@ -1,0 +1,27 @@
+name: Deploy Production
+on:
+    push:
+      branches:
+        - main
+
+permissions:
+    security-events: write
+    id-token: write   # This is required for requesting the JWT
+    contents: read    # This is required for actions/checkout
+
+jobs:
+  scans:
+    uses: ./.github/workflows/scan.yml
+    name: Scans
+  deployinfrastructure:
+    needs: [scans]
+    uses: ./.github/workflows/deploy-iac.yml
+    name: Deploy Infrastructure
+  buildCode:
+    needs: [deployinfrastructure]
+    uses: ./.github/workflows/build-code.yml
+    name: Build Code
+  deployCodeProduction:
+    needs: [buildCode]
+    uses: ./.github/workflows/deploy-code.yml
+    name: Deploy Code Production
